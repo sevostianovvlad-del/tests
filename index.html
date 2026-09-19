@@ -136,6 +136,31 @@
         .delete-btn {
             background: none; border: none; color: var(--danger); cursor: pointer; font-size: 14px; margin-top: 10px; text-decoration: underline;
         }
+
+        .home-logo {
+            display: block;
+            max-width: 360px;
+            width: 100%;
+            height: auto;
+            margin: 0 auto 25px;
+            border-radius: 18px;
+        }
+
+        .gallery-add-card {
+            grid-column: 1 / -1;
+            margin-bottom: 10px;
+        }
+
+        .gallery-add-card h2 { margin-top: 0; }
+        .gallery-help {
+            color: var(--text-muted);
+            font-size: 13px;
+            margin-top: 6px;
+        }
+
+        .gallery-card .delete-btn {
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
@@ -157,6 +182,7 @@
         
         <!-- VIEW: HOME -->
         <div id="view-home" class="view active">
+            <img class="home-logo" src="https://i.postimg.cc/Znv9HsWm/logo.png" alt="LinguaPro">
             <h1>Добро пожаловать на платформу LinguaPro!</h1>
             <div class="card">
                 <h2>О платформе</h2>
@@ -174,6 +200,21 @@
         <div id="view-gallery" class="view">
             <h1>Галерея видео</h1>
             <p>Здесь собраны все доступные видео для тестов по аудированию. Посмотрите видео или нажмите «Создать тест по этому видео», чтобы сразу перейти к созданию вопросов.</p>
+            <div class="card gallery-add-card">
+                <h2>➕ Добавить новое видео</h2>
+                <form onsubmit="addGalleryVideo(event)">
+                    <div class="form-group">
+                        <label>Название видео</label>
+                        <input type="text" id="gallery-video-title" class="form-control" required placeholder="Например: Listening A2 — Daily Routine">
+                    </div>
+                    <div class="form-group">
+                        <label>Ссылка на YouTube</label>
+                        <input type="url" id="gallery-video-url" class="form-control" required placeholder="https://www.youtube.com/watch?v=...">
+                        <div class="gallery-help">Можно вставлять обычную ссылку YouTube, youtu.be или ссылку /embed/.</div>
+                    </div>
+                    <button type="submit" class="btn">🎬 Добавить видео в галерею</button>
+                </form>
+            </div>
             <div class="gallery-grid" id="gallery-container">
                 <!-- Видео добавляются через JS -->
             </div>
@@ -309,7 +350,7 @@
         const STORAGE_VERSION = '_v4'; // Обновил версию для интеграции с Галереей
 
         // --- ГАЛЕРЕЯ ВИДЕО ---
-        const galleryVideos = [
+        let galleryVideos = [
             { 
                 id: 'ep1', 
                 title: '1 эпизод', 
@@ -330,6 +371,13 @@
                 originalUrl: 'https://www.youtube.com/embed/bcoADY7xdBw?si=s61Lh38wDW0lr-yW'
             }
         ];
+
+        // Пользовательские видео сохраняются в браузере и автоматически
+        // добавляются к предзагруженным видео после повторного открытия сайта.
+        const savedGalleryVideos = JSON.parse(localStorage.getItem('galleryVideos' + STORAGE_VERSION) || '[]');
+        if (Array.isArray(savedGalleryVideos)) {
+            galleryVideos = galleryVideos.concat(savedGalleryVideos);
+        }
 
         // --- ДАННЫЕ (Предзагруженные тесты по лексике) ---
         const predefinedTests = [
@@ -425,12 +473,13 @@
             galleryVideos.forEach(video => {
                 const card = document.createElement('div');
                 card.className = 'gallery-card';
+                const isCustom = video.custom === true;
                 card.innerHTML = `
-                    <h3>${video.title}</h3>
+                    <h3>${escapeHtml(video.title)}</h3>
                     <div class="gallery-video-container">
                         <iframe 
                             src="${video.embedUrl}" 
-                            title="${video.title}"
+                            title="${escapeHtml(video.title)}"
                             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
                             referrerpolicy="strict-origin-when-cross-origin"
                             allowfullscreen>
@@ -439,30 +488,80 @@
                     <button class="btn" onclick="selectGalleryVideo('${video.id}')">
                         🎧 Создать тест по этому видео
                     </button>
+                    ${isCustom ? `<button class="delete-btn" onclick="deleteGalleryVideo('${video.id}')">Удалить из галереи</button>` : ''}
                 `;
                 container.appendChild(card);
             });
         }
 
-        // Выбор видео прямо из Галереи для создания теста по аудированию
-        function selectGalleryVideo(videoId) {
-            switchView('create');
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>'"]/g, char => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            }[char]));
+        }
 
-            const categorySelect = document.getElementById('test-category');
-            const youtubeSelect = document.getElementById('test-youtube');
+        function getYoutubeId(url) {
+            try {
+                const parsed = new URL(url);
+                const host = parsed.hostname.replace('www.', '').toLowerCase();
 
-            categorySelect.value = 'listening';
-            toggleYoutubeField();
+                if (host === 'youtu.be') {
+                    return parsed.pathname.slice(1).split('/')[0];
+                }
 
-            youtubeSelect.value = videoId;
+                if (host === 'youtube.com' || host === 'm.youtube.com') {
+                    if (parsed.pathname === '/watch') return parsed.searchParams.get('v');
+                    if (parsed.pathname.startsWith('/embed/')) return parsed.pathname.split('/')[2];
+                    if (parsed.pathname.startsWith('/shorts/')) return parsed.pathname.split('/')[2];
+                }
+            } catch (e) {
+                return null;
+            }
+            return null;
+        }
 
-            // Если вопросов ещё нет — добавляем первое поле
-            const questionsContainer = document.getElementById('questions-container');
-            if (questionsContainer.children.length === 0) {
-                addQuestionField();
+        function addGalleryVideo(event) {
+            event.preventDefault();
+
+            const titleInput = document.getElementById('gallery-video-title');
+            const urlInput = document.getElementById('gallery-video-url');
+            const title = titleInput.value.trim();
+            const originalUrl = urlInput.value.trim();
+            const youtubeId = getYoutubeId(originalUrl);
+
+            if (!youtubeId) {
+                alert('Не удалось распознать ссылку YouTube. Вставьте обычную ссылку YouTube, youtu.be или /embed/.');
+                return;
             }
 
-            document.getElementById('test-title').focus();
+            const video = {
+                id: 'custom_' + Date.now(),
+                title: title,
+                embedUrl: 'https://www.youtube.com/embed/' + youtubeId + '?rel=0',
+                originalUrl: originalUrl,
+                custom: true
+            };
+
+            galleryVideos.push(video);
+            const customVideos = galleryVideos.filter(v => v.custom === true);
+            localStorage.setItem('galleryVideos' + STORAGE_VERSION, JSON.stringify(customVideos));
+
+            titleInput.value = '';
+            urlInput.value = '';
+            renderGallery();
+            toggleYoutubeField();
+        }
+
+        function deleteGalleryVideo(id) {
+            const video = galleryVideos.find(v => v.id === id);
+            if (!video || !video.custom) return;
+            if (!confirm(`Удалить видео «${video.title}» из галереи?`)) return;
+
+            galleryVideos = galleryVideos.filter(v => v.id !== id);
+            const customVideos = galleryVideos.filter(v => v.custom === true);
+            localStorage.setItem('galleryVideos' + STORAGE_VERSION, JSON.stringify(customVideos));
+            renderGallery();
+            toggleYoutubeField();
         }
 
         // --- ЛОГИКА ТЕСТОВ ---
